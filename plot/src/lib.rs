@@ -12,16 +12,12 @@
 //! ![Plot](curve.svg)
 //!
 //! ```
-//! extern crate itertools_num;
-//! extern crate criterion_plot as plot;
-//!
 //! # use std::fs;
 //! # use std::path::Path;
 //! use itertools_num::linspace;
-//! use plot::prelude::*;
+//! use criterion_plot::prelude::*;
 //!
-//! # fn main() {
-//! # if let Err(_) = plot::version() {
+//! # if let Err(_) = criterion_plot::version() {
 //! #     return;
 //! # }
 //! let ref xs = linspace::<f64>(-10., 10., 51).collect::<Vec<_>>();
@@ -70,7 +66,6 @@
 //! #   .and_then(|gnuplot| {
 //! #       gnuplot.wait_with_output().ok().and_then(|p| String::from_utf8(p.stderr).ok())
 //! #   }));
-//! # }
 //! ```
 //!
 //! - error bars (based on
@@ -79,17 +74,13 @@
 //! ![Plot](error_bar.svg)
 //!
 //! ```
-//! extern crate itertools_num;
-//! extern crate rand;
-//! extern crate criterion_plot as plot;
-//!
 //! # use std::fs;
 //! # use std::path::Path;
 //! use std::f64::consts::PI;
 //!
 //! use itertools_num::linspace;
 //! use rand::{Rng, XorShiftRng};
-//! use plot::prelude::*;
+//! use criterion_plot::prelude::*;
 //!
 //! fn sinc(mut x: f64) -> f64 {
 //!     if x == 0. {
@@ -100,8 +91,7 @@
 //!     }
 //! }
 //!
-//! # fn main() {
-//! # if let Err(_) = plot::version() {
+//! # if let Err(_) = criterion_plot::version() {
 //! #     return;
 //! # }
 //! let ref xs_ = linspace::<f64>(-4., 4., 101).collect::<Vec<_>>();
@@ -156,7 +146,6 @@
 //! #   .and_then(|gnuplot| {
 //! #       gnuplot.wait_with_output().ok().and_then(|p| String::from_utf8(p.stderr).ok())
 //! #   }));
-//! # }
 //! ```
 //!
 //! - Candlesticks (based on
@@ -165,16 +154,12 @@
 //! ![Plot](candlesticks.svg)
 //!
 //! ```
-//! extern crate rand;
-//! extern crate criterion_plot as plot;
-//!
 //! # use std::fs;
 //! # use std::path::Path;
-//! use plot::prelude::*;
+//! use criterion_plot::prelude::*;
 //! use rand::Rng;
 //!
-//! # fn main() {
-//! # if let Err(_) = plot::version() {
+//! # if let Err(_) = criterion_plot::version() {
 //! #     return;
 //! # }
 //! let xs = 1..11;
@@ -226,7 +211,6 @@
 //! #   .and_then(|gnuplot| {
 //! #       gnuplot.wait_with_output().ok().and_then(|p| String::from_utf8(p.stderr).ok())
 //! #   }));
-//! # }
 //! ```
 //!
 //! - Multiaxis (based on [`multiaxis.dem`](http://gnuplot.sourceforge.net/demo/multiaxis.html))
@@ -234,24 +218,19 @@
 //! ![Plot](multiaxis.svg)
 //!
 //! ```
-//! extern crate itertools_num;
-//! extern crate num_complex;
-//! extern crate criterion_plot as plot;
-//!
 //! # use std::fs;
 //! # use std::path::Path;
 //! use std::f64::consts::PI;
 //!
 //! use itertools_num::linspace;
 //! use num_complex::Complex;
-//! use plot::prelude::*;
+//! use criterion_plot::prelude::*;
 //!
 //! fn tf(x: f64) -> Complex<f64> {
 //!     Complex::new(0., x) / Complex::new(10., x) / Complex::new(1., x / 10_000.)
 //! }
 //!
-//! # fn main() {
-//! # if let Err(_) = plot::version() {
+//! # if let Err(_) = criterion_plot::version() {
 //! #     return;
 //! # }
 //! let (start, end): (f64, f64) = (1.1, 90_000.);
@@ -304,7 +283,6 @@
 //! #           String::from_utf8(p.stderr).ok()
 //! #       })
 //! #   }));
-//! # }
 //! ```
 //! - Filled curves (based on
 //! [`transparent.dem`](http://gnuplot.sourceforge.net/demo/transparent.html))
@@ -312,19 +290,15 @@
 //! ![Plot](filled_curve.svg)
 //!
 //! ```
-//! extern crate itertools_num;
-//! extern crate criterion_plot as plot;
-//!
 //! # use std::fs;
 //! # use std::path::Path;
 //! use std::f64::consts::PI;
 //! use std::iter;
 //!
 //! use itertools_num::linspace;
-//! use plot::prelude::*;
+//! use criterion_plot::prelude::*;
 //!
-//! # fn main() {
-//! # if let Err(_) = plot::version() {
+//! # if let Err(_) = criterion_plot::version() {
 //! #     return;
 //! # }
 //! let (start, end) = (-5., 5.);
@@ -385,7 +359,6 @@
 //!     .and_then(|gnuplot| {
 //!         gnuplot.wait_with_output().ok().and_then(|p| String::from_utf8(p.stderr).ok())
 //!     }));
-//! # }
 //! ```
 
 #![deny(missing_docs)]

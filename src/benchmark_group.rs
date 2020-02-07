@@ -142,6 +142,9 @@ impl<'a, M: Measurement> BenchmarkGroup<'a, M> {
     /// Panics if the number of resamples is set to zero
     pub fn nresamples(&mut self, n: usize) -> &mut Self {
         assert!(n > 0);
+        if n <= 1000 {
+            println!("\nWarning: It is not recommended to reduce nresamples below 1000.");
+        }
 
         self.partial_config.nresamples = Some(n);
         self
@@ -250,7 +253,6 @@ impl<'a, M: Measurement> BenchmarkGroup<'a, M> {
         let config = self.partial_config.to_complete(&self.criterion.config);
         let report_context = ReportContext {
             output_directory: self.criterion.output_directory.clone(),
-            plotting: self.criterion.plotting,
             plot_config: self.partial_config.plot_config.clone(),
             test_mode: self.criterion.test_mode,
         };
@@ -312,7 +314,6 @@ impl<'a, M: Measurement> Drop for BenchmarkGroup<'a, M> {
         {
             let report_context = ReportContext {
                 output_directory: self.criterion.output_directory.clone(),
-                plotting: self.criterion.plotting,
                 plot_config: self.partial_config.plot_config.clone(),
                 test_mode: self.criterion.test_mode,
             };

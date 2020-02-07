@@ -37,6 +37,7 @@ extern crate approx;
 extern crate quickcheck;
 
 use clap::value_t;
+use regex::Regex;
 
 #[macro_use]
 extern crate lazy_static;
@@ -80,6 +81,9 @@ use std::fmt;
 use std::iter::IntoIterator;
 use std::marker::PhantomData;
 use std::time::Duration;
+use std::time::Instant;
+
+use criterion_plot::{Version, VersionError};
 
 use crate::benchmark::BenchmarkConfig;
 use crate::benchmark::NamedRoutine;
@@ -88,7 +92,6 @@ use crate::estimate::{Distributions, Estimates, Statistic};
 use crate::html::Html;
 use crate::measurement::{Measurement, WallTime};
 use crate::plot::{Gnuplot, Plotter, PlottersBackend};
-use crate::plotting::Plotting;
 use crate::profiler::{ExternalProfiler, Profiler};
 use crate::report::{CliReport, Report, ReportContext, Reports};
 use crate::routine::Function;
@@ -98,6 +101,22 @@ pub use crate::benchmark_group::{BenchmarkGroup, BenchmarkId};
 
 lazy_static! {
     static ref DEBUG_ENABLED: bool = { std::env::vars().any(|(key, _)| key == "CRITERION_DEBUG") };
+    static ref GNUPLOT_VERSION: Result<Version, VersionError> = { criterion_plot::version() };
+    static ref DEFAULT_PLOTTING_BACKEND: PlottingBackend = {
+        match &*GNUPLOT_VERSION {
+            Ok(_) => PlottingBackend::Gnuplot,
+            Err(e) => {
+                match e {
+                    VersionError::Exec(_) => println!("Gnuplot not found, using plotters backend"),
+                    e => println!(
+                        "Gnuplot not found or not usable, using plotters backend\n{}",
+                        e
+                    ),
+                };
+                PlottingBackend::Plotters
+            }
+        }
+    };
 }
 
 fn debug_enabled() -> bool {
@@ -260,10 +279,11 @@ impl BatchSize {
 ///   but are more complex than `iter_with_large_drop`.
 /// * Otherwise, use `iter`.
 pub struct Bencher<'a, M: Measurement = WallTime> {
-    iterated: bool,
-    iters: u64,
-    value: M::Value,
-    measurement: &'a M,
+    iterated: bool,         // have we iterated this benchmark?
+    iters: u64,             // Number of times to iterate this benchmark
+    value: M::Value,        // The measured value
+    measurement: &'a M,     // Reference to the measurement object
+    elapsed_time: Duration, // How much time did it take to perform the iteration? Used for the warmup period.
 }
 impl<'a, M: Measurement> Bencher<'a, M> {
     /// Times a `routine` by executing it many times and timing the total elapsed time.
@@ -308,16 +328,18 @@ impl<'a, M: Measurement> Bencher<'a, M> {
         R: FnMut() -> O,
     {
         self.iterated = true;
+        let time_start = Instant::now();
         let start = self.measurement.start();
         for _ in 0..self.iters {
             black_box(routine());
         }
         self.value = self.measurement.end(start);
+        self.elapsed_time = time_start.elapsed();
     }
 
-    /// Times a `routine` by executing it many times and relying on `routine` to measure it's own execution time.
+    /// Times a `routine` by executing it many times and relying on `routine` to measure its own execution time.
     ///
-    /// Prefer this timing loop in cases where `routine` has to do it's own measurements to
+    /// Prefer this timing loop in cases where `routine` has to do its own measurements to
     /// get accurate timing information (for example in multi-threaded scenarios where you spawn
     /// and coordinate with multiple threads).
     ///
@@ -357,7 +379,9 @@ impl<'a, M: Measurement> Bencher<'a, M> {
         R: FnMut(u64) -> M::Value,
     {
         self.iterated = true;
+        let time_start = Instant::now();
         self.value = routine(self.iters);
+        self.elapsed_time = time_start.elapsed();
     }
 
     #[doc(hidden)]
@@ -472,6 +496,7 @@ impl<'a, M: Measurement> Bencher<'a, M> {
         self.iterated = true;
         let batch_size = size.iters_per_batch(self.iters);
         assert!(batch_size != 0, "Batch size must not be zero.");
+        let time_start = Instant::now();
         self.value = self.measurement.zero();
 
         if batch_size == 1 {
@@ -504,6 +529,8 @@ impl<'a, M: Measurement> Bencher<'a, M> {
                 iteration_counter += batch_size;
             }
         }
+
+        self.elapsed_time = time_start.elapsed();
     }
 
     /// Times a `routine` that requires some input by generating a batch of input, then timing the
@@ -559,6 +586,7 @@ impl<'a, M: Measurement> Bencher<'a, M> {
         self.iterated = true;
         let batch_size = size.iters_per_batch(self.iters);
         assert!(batch_size != 0, "Batch size must not be zero.");
+        let time_start = Instant::now();
         self.value = self.measurement.zero();
 
         if batch_size == 1 {
@@ -592,6 +620,7 @@ impl<'a, M: Measurement> Bencher<'a, M> {
                 iteration_counter += batch_size;
             }
         }
+        self.elapsed_time = time_start.elapsed();
     }
 
     // Benchmarks must actually call one of the iter methods. This causes benchmarks to fail loudly
@@ -605,6 +634,7 @@ impl<'a, M: Measurement> Bencher<'a, M> {
 }
 
 /// Baseline describes how the baseline_directory is handled.
+#[derive(Debug, Clone, Copy)]
 pub enum Baseline {
     /// Compare ensures a previous saved version of the baseline
     /// exists and runs comparison against that.
@@ -612,6 +642,17 @@ pub enum Baseline {
     /// Save writes the benchmark results to the baseline directory,
     /// overwriting any results that were previously there.
     Save,
+}
+
+/// Enum used to select the plotting backend.
+#[derive(Debug, Clone, Copy)]
+pub enum PlottingBackend {
+    /// Plotting backend which uses the external `gnuplot` command to render plots. This is the
+    /// default if the `gnuplot` command is installed.
+    Gnuplot,
+    /// Plotting backend which uses the rust 'Plotters' library. This is the default if `gnuplot`
+    /// is not installed.
+    Plotters,
 }
 
 /// The benchmark manager
@@ -630,14 +671,15 @@ pub enum Baseline {
 /// benchmark.
 pub struct Criterion<M: Measurement = WallTime> {
     config: BenchmarkConfig,
-    prefer_plotters: bool,
-    plotting: Plotting,
-    filter: Option<String>,
+    plotting_backend: PlottingBackend,
+    plotting_enabled: bool,
+    filter: Option<Regex>,
     report: Box<dyn Report>,
     output_directory: String,
     baseline_directory: String,
     baseline: Baseline,
     profile_time: Option<Duration>,
+    load_baseline: Option<String>,
     test_mode: bool,
     list_mode: bool,
     all_directories: HashSet<String>,
@@ -656,12 +698,9 @@ impl Default for Criterion {
     /// - Noise threshold: 0.01 (1%)
     /// - Confidence level: 0.95
     /// - Significance level: 0.05
-    /// - Plotting: enabled (if gnuplot is available)
+    /// - Plotting: enabled, using gnuplot if available or plotters if gnuplot is not available
     /// - No filter
     fn default() -> Criterion {
-        #[allow(unused_mut, unused_assignments)]
-        let mut plotting = Plotting::Unset;
-
         let mut reports: Vec<Box<dyn Report>> = vec![];
         reports.push(Box::new(CliReport::new(false, false, false)));
         reports.push(Box::new(FileCsvReport));
@@ -682,16 +721,14 @@ impl Default for Criterion {
                 significance_level: 0.05,
                 warm_up_time: Duration::new(3, 0),
             },
-            // In the initial version, we just prefer the Gnuplot backend by default, but we can
-            // adjust adjust later. And we may remove this if we decide completely relies on
-            // Plotters for plotting.
-            prefer_plotters: false,
-            plotting,
+            plotting_backend: *DEFAULT_PLOTTING_BACKEND,
+            plotting_enabled: true,
             filter: None,
             report: Box::new(Reports::new(reports)),
             baseline_directory: "base".to_owned(),
             baseline: Baseline::Save,
             profile_time: None,
+            load_baseline: None,
             test_mode: false,
             list_mode: false,
             output_directory,
@@ -709,13 +746,14 @@ impl<M: Measurement> Criterion<M> {
     pub fn with_measurement<M2: Measurement>(self, m: M2) -> Criterion<M2> {
         Criterion {
             config: self.config,
-            prefer_plotters: self.prefer_plotters,
-            plotting: self.plotting,
+            plotting_backend: self.plotting_backend,
+            plotting_enabled: self.plotting_enabled,
             filter: self.filter,
             report: self.report,
             baseline_directory: self.baseline_directory,
             baseline: self.baseline,
             profile_time: self.profile_time,
+            load_baseline: self.load_baseline,
             test_mode: self.test_mode,
             list_mode: self.list_mode,
             output_directory: self.output_directory,
@@ -735,15 +773,19 @@ impl<M: Measurement> Criterion<M> {
         }
     }
 
-    /// Changes the preferred plotting backend to Plotters based one.
+    /// Set the plotting backend. By default, Criterion will use gnuplot if available, or plotters
+    /// if not.
     ///
-    /// By default Criterion will use gnuplot if possible and use plotters as the fallback plotting
-    /// backend.
-    /// If plotters backend is preferred, Criterion will use plotters backend regardless if gnuplot
-    /// is installed.
-    pub fn prefer_plotters(self) -> Criterion<M> {
+    /// Panics if `backend` is `PlottingBackend::Gnuplot` and gnuplot is not available.
+    pub fn plotting_backend(self, backend: PlottingBackend) -> Criterion<M> {
+        if let PlottingBackend::Gnuplot = backend {
+            if GNUPLOT_VERSION.is_err() {
+                panic!("Gnuplot plotting backend was requested, but gnuplot is not available. To continue, either install Gnuplot or allow Criterion.rs to fall back to using plotters.");
+            }
+        }
+
         Criterion {
-            prefer_plotters: true,
+            plotting_backend: backend,
             ..self
         }
     }
@@ -807,6 +849,9 @@ impl<M: Measurement> Criterion<M> {
     /// Panics if the number of resamples is set to zero
     pub fn nresamples(mut self, n: usize) -> Criterion<M> {
         assert!(n > 0);
+        if n <= 1000 {
+            println!("\nWarning: It is not recommended to reduce nresamples below 1000.");
+        }
 
         self.config.nresamples = n;
         self
@@ -862,26 +907,15 @@ impl<M: Measurement> Criterion<M> {
     }
 
     fn create_plotter(&self) -> Box<dyn Plotter> {
-        use criterion_plot::VersionError;
-        match (self.prefer_plotters, criterion_plot::version()) {
-            (false, Ok(_)) => Box::new(Gnuplot::default()),
-            (false, Err(e)) => {
-                match e {
-                    VersionError::Exec(_) => println!("Gnuplot not found, using plotters backend"),
-                    e => println!(
-                        "Gnuplot not found or not usable, using plotters backend\n{}",
-                        e
-                    ),
-                }
-                Box::new(PlottersBackend::default())
-            }
-            _ => Box::new(PlottersBackend::default()),
+        match self.plotting_backend {
+            PlottingBackend::Gnuplot => Box::new(Gnuplot::default()),
+            PlottingBackend::Plotters => Box::new(PlottersBackend::default()),
         }
     }
 
     /// Enables plotting
     pub fn with_plots(mut self) -> Criterion<M> {
-        self.plotting = Plotting::Enabled;
+        self.plotting_enabled = true;
         let mut reports: Vec<Box<dyn Report>> = vec![];
         reports.push(Box::new(CliReport::new(false, false, false)));
         reports.push(Box::new(FileCsvReport));
@@ -893,17 +927,19 @@ impl<M: Measurement> Criterion<M> {
 
     /// Disables plotting
     pub fn without_plots(mut self) -> Criterion<M> {
-        self.plotting = Plotting::Disabled;
+        self.plotting_enabled = false;
+        let mut reports: Vec<Box<dyn Report>> = vec![];
+        reports.push(Box::new(CliReport::new(false, false, false)));
+        reports.push(Box::new(FileCsvReport));
+        self.report = Box::new(Reports::new(reports));
         self
     }
 
     /// Return true if generation of the plots is possible.
     pub fn can_plot(&self) -> bool {
-        match self.plotting {
-            Plotting::NotAvailable => false,
-            Plotting::Enabled => true,
-            _ => criterion_plot::version().is_ok(),
-        }
+        // Trivially true now that we have plotters.
+        // TODO: Deprecate and remove this.
+        true
     }
 
     /// Names an explicit baseline and enables overwriting the previous results.
@@ -923,7 +959,14 @@ impl<M: Measurement> Criterion<M> {
     /// Filters the benchmarks. Only benchmarks with names that contain the
     /// given string will be executed.
     pub fn with_filter<S: Into<String>>(mut self, filter: S) -> Criterion<M> {
-        self.filter = Some(filter.into());
+        let filter_text = filter.into();
+        let filter = Regex::new(&filter_text).unwrap_or_else(|err| {
+            panic!(
+                "Unable to parse '{}' as a regular expression: {}",
+                filter_text, err
+            )
+        });
+        self.filter = Some(filter);
 
         self
     }
@@ -953,7 +996,6 @@ impl<M: Measurement> Criterion<M> {
 
         let report_context = ReportContext {
             output_directory: self.output_directory.clone(),
-            plotting: self.plotting,
             plot_config: PlotConfiguration::default(),
             test_mode: self.test_mode,
         };
@@ -1004,6 +1046,12 @@ impl<M: Measurement> Criterion<M> {
                 .long("profile-time")
                 .takes_value(true)
                 .help("Iterate each benchmark for approximately the given number of seconds, doing no analysis and without storing the results. Useful for running the benchmarks in a profiler."))
+            .arg(Arg::with_name("load-baseline")
+                 .long("load-baseline")
+                 .takes_value(true)
+                 .conflicts_with("profile-time")
+                 .requires("baseline")
+                 .help("Load a previous baseline instead of sampling new data."))
             .arg(Arg::with_name("sample-size")
                 .long("sample-size")
                 .takes_value(true)
@@ -1039,9 +1087,11 @@ impl<M: Measurement> Criterion<M> {
             .arg(Arg::with_name("bench")
                 .hidden(true)
                 .long("bench"))
-            .arg(Arg::with_name("prefer-plotters")
-                 .long("prefer-plotters")
-                 .help("Set the preferred plotting backend to Plotters, otherwise Criterion will only use plotters backend when gnuplot isn't available."))
+            .arg(Arg::with_name("plotting-backend")
+                 .long("plotting-backend")
+                 .takes_value(true)
+                 .possible_values(&["gnuplot", "plotters"])
+                 .help("Set the plotting backend. By default, Criterion will use the gnuplot backend if gnuplot is available, or the plotters backend if it isn't."))
             .arg(Arg::with_name("version")
                 .hidden(true)
                 .short("V")
@@ -1077,8 +1127,12 @@ To test that the benchmarks work, run `cargo test --benches`
             _ => enable_text_coloring = stdout_isatty,
         }
 
-        if matches.is_present("prefer-plotters") {
-            self.prefer_plotters = true;
+        match matches.value_of("plotting-backend") {
+            // Use plotting_backend() here to re-use the panic behavior if Gnuplot is not available.
+            Some("gnuplot") => self = self.plotting_backend(PlottingBackend::Gnuplot),
+            Some("plotters") => self = self.plotting_backend(PlottingBackend::Plotters),
+            Some(val) => panic!("Unexpected plotting backend '{}'", val),
+            None => {}
         }
 
         if matches.is_present("noplot") || matches.is_present("test") {
@@ -1116,6 +1170,10 @@ To test that the benchmarks work, run `cargo test --benches`
             }
 
             self.profile_time = Some(Duration::from_secs(num_seconds));
+        }
+
+        if let Some(dir) = matches.value_of("load-baseline") {
+            self.load_baseline = Some(dir.to_owned());
         }
 
         let bench = matches.is_present("bench");
@@ -1208,7 +1266,7 @@ To test that the benchmarks work, run `cargo test --benches`
             self.list_mode = true;
         }
 
-        if self.profile_time.is_none() {
+        if self.profile_time.is_none() && self.plotting_enabled {
             reports.push(Box::new(Html::new(self.create_plotter())));
         }
 
@@ -1219,7 +1277,7 @@ To test that the benchmarks work, run `cargo test --benches`
 
     fn filter_matches(&self, id: &str) -> bool {
         match self.filter {
-            Some(ref string) => id.contains(string),
+            Some(ref regex) => regex.is_match(id),
             None => true,
         }
     }
@@ -1447,29 +1505,6 @@ where
     ) -> &mut Criterion<M> {
         benchmark.run(group_id, self);
         self
-    }
-}
-
-mod plotting {
-    #[derive(Debug, Clone, Copy)]
-    pub enum Plotting {
-        Unset,
-        Disabled,
-        Enabled,
-        // Not sure if we should make Plotters backend behind a feature swith, but if this is the
-        // case, we definitely want to keep this. Otherwise, we should have at least plotters
-        // backend as the default plotter when Gnuplot is not available.
-        #[allow(dead_code)]
-        NotAvailable,
-    }
-
-    impl Plotting {
-        pub fn is_enabled(self) -> bool {
-            match self {
-                Plotting::Enabled => true,
-                _ => false,
-            }
-        }
     }
 }
 

@@ -157,6 +157,9 @@ macro_rules! benchmark_config {
         /// Panics if the number of resamples is set to zero
         pub fn nresamples(mut self, n: usize) -> Self {
             assert!(n > 0);
+            if n <= 1000 {
+                println!("\nWarning: It is not recommended to reduce nresamples below 1000.");
+            }
 
             self.config.nresamples = Some(n);
             self
@@ -286,7 +289,6 @@ impl<M: Measurement> BenchmarkDefinition<M> for Benchmark<M> {
     fn run(self, group_id: &str, c: &mut Criterion<M>) {
         let report_context = ReportContext {
             output_directory: c.output_directory.clone(),
-            plotting: c.plotting,
             plot_config: self.config.plot_config.clone(),
             test_mode: c.test_mode,
         };
@@ -436,7 +438,6 @@ where
     fn run(self, group_id: &str, c: &mut Criterion<M>) {
         let report_context = ReportContext {
             output_directory: c.output_directory.clone(),
-            plotting: c.plotting,
             plot_config: self.config.plot_config.clone(),
             test_mode: c.test_mode,
         };

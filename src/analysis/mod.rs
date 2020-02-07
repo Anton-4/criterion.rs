@@ -82,14 +82,37 @@ pub(crate) fn common<M: Measurement, T>(
         return;
     }
 
-    let (iters, times) = routine.sample(
-        &criterion.measurement,
-        id,
-        config,
-        criterion,
-        report_context,
-        parameter,
-    );
+    let (iters, times);
+    if let Some(baseline) = &criterion.load_baseline {
+        let loaded = fs::load::<(Box<[f64]>, Box<[f64]>), _>(&format!(
+            "{}/{}/{}/sample.json",
+            criterion.output_directory,
+            id.as_directory_name(),
+            baseline
+        ));
+
+        match loaded {
+            Err(err) => panic!(
+                "Baseline '{base}' must exist before it can be loaded; try --save-baseline {base}. Error: {err}",
+                base = baseline, err = err
+            ),
+            Ok(samples) => {
+                iters = samples.0;
+                times = samples.1;
+            }
+        }
+    } else {
+        let samples = routine.sample(
+            &criterion.measurement,
+            id,
+            config,
+            criterion,
+            report_context,
+            parameter,
+        );
+        iters = samples.0;
+        times = samples.1;
+    }
 
     criterion.report.analysis(id, report_context);
 
@@ -100,11 +123,13 @@ pub(crate) fn common<M: Measurement, T>(
         .collect::<Vec<f64>>();
     let avg_times = Sample::new(&avg_times);
 
-    log_if_err!(fs::mkdirp(&format!(
-        "{}/{}/new",
-        criterion.output_directory,
-        id.as_directory_name()
-    )));
+    if criterion.load_baseline.is_none() {
+        log_if_err!(fs::mkdirp(&format!(
+            "{}/{}/new",
+            criterion.output_directory,
+            id.as_directory_name()
+        )));
+    }
 
     let data = Data::new(&iters, &times);
     let labeled_sample = outliers(id, &criterion.output_directory, avg_times);
@@ -114,22 +139,24 @@ pub(crate) fn common<M: Measurement, T>(
     estimates.insert(Statistic::Slope, slope);
     distributions.insert(Statistic::Slope, distribution);
 
-    log_if_err!(fs::save(
-        &(data.x().as_ref(), data.y().as_ref()),
-        &format!(
-            "{}/{}/new/sample.json",
-            criterion.output_directory,
-            id.as_directory_name()
-        ),
-    ));
-    log_if_err!(fs::save(
-        &estimates,
-        &format!(
-            "{}/{}/new/estimates.json",
-            criterion.output_directory,
-            id.as_directory_name()
-        )
-    ));
+    if criterion.load_baseline.is_none() {
+        log_if_err!(fs::save(
+            &(data.x().as_ref(), data.y().as_ref()),
+            &format!(
+                "{}/{}/new/sample.json",
+                criterion.output_directory,
+                id.as_directory_name()
+            ),
+        ));
+        log_if_err!(fs::save(
+            &estimates,
+            &format!(
+                "{}/{}/new/estimates.json",
+                criterion.output_directory,
+                id.as_directory_name()
+            )
+        ));
+    }
 
     let compare_data = if base_dir_exists(
         id,
@@ -175,7 +202,7 @@ pub(crate) fn common<M: Measurement, T>(
     let measurement_data = crate::report::MeasurementData {
         data: Data::new(&*iters, &*times),
         avg_times: labeled_sample,
-        absolute_estimates: estimates.clone(),
+        absolute_estimates: estimates,
         distributions,
         comparison: compare_data,
         throughput,
@@ -188,14 +215,16 @@ pub(crate) fn common<M: Measurement, T>(
         criterion.measurement.formatter(),
     );
 
-    log_if_err!(fs::save(
-        &id,
-        &format!(
-            "{}/{}/new/benchmark.json",
-            criterion.output_directory,
-            id.as_directory_name()
-        )
-    ));
+    if criterion.load_baseline.is_none() {
+        log_if_err!(fs::save(
+            &id,
+            &format!(
+                "{}/{}/new/benchmark.json",
+                criterion.output_directory,
+                id.as_directory_name()
+            )
+        ));
+    }
 
     if let Baseline::Save = criterion.baseline {
         copy_new_dir_to_base(

@@ -120,12 +120,10 @@ where
         where
             T: PartialOrd,
         {
-            if a < b {
-                Ordering::Less
-            } else if a == b {
-                Ordering::Equal
-            } else {
-                Ordering::Greater
+            match a.partial_cmp(b) {
+                Some(o) => o,
+                // Arbitrary way to handle NaNs that should never happen
+                None => Ordering::Equal,
             }
         }
 

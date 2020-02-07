@@ -4,7 +4,7 @@ use crate::report::{BenchmarkId, ReportContext};
 use crate::{Bencher, Criterion, DurationExt};
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// PRIVATE
 pub trait Routine<M: Measurement, T> {
@@ -91,6 +91,14 @@ pub trait Routine<M: Measurement, T> {
             .warmup(id, report_context, wu.to_nanos() as f64);
 
         let (wu_elapsed, wu_iters) = self.warm_up(measurement, wu, parameter);
+        if crate::debug_enabled() {
+            println!(
+                "\nCompleted {} iterations in {} nanoseconds, estimated execution time is {} ns",
+                wu_iters,
+                wu_elapsed,
+                wu_elapsed as f64 / wu_iters as f64
+            );
+        }
 
         // Initial guess for the mean execution time
         let met = wu_elapsed as f64 / wu_iters as f64;
@@ -104,8 +112,14 @@ pub trait Routine<M: Measurement, T> {
         if d == 1 {
             let recommended_sample_size = recommend_sample_size(m_ns as f64, met);
             let actual_time = Duration::from_nanos(expected_ns as u64);
-            println!("\nWarning: Unable to complete {} samples in {:.1?}. You may wish to increase target time to {:.1?} or reduce sample count to {}",
-                n, config.measurement_time, actual_time, recommended_sample_size);
+            print!("\nWarning: Unable to complete {} samples in {:.1?}. You may wish to increase target time to {:.1?}",
+                    n, config.measurement_time, actual_time);
+
+            if recommended_sample_size != n {
+                println!(" or reduce sample count to {}.", recommended_sample_size);
+            } else {
+                println!(".");
+            }
         }
 
         let m_iters = (1..(n + 1) as u64).map(|a| a * d).collect::<Vec<u64>>();
@@ -182,6 +196,7 @@ where
             iters: 0,
             value: m.zero(),
             measurement: m,
+            elapsed_time: Duration::from_millis(0),
         };
 
         iters
@@ -202,19 +217,20 @@ where
             iters: 1,
             value: m.zero(),
             measurement: m,
+            elapsed_time: Duration::from_millis(0),
         };
 
         let mut total_iters = 0;
-        let start = Instant::now();
+        let mut elapsed_time = Duration::from_millis(0);
         loop {
             (*f)(&mut b, parameter);
 
             b.assert_iterated();
 
             total_iters += b.iters;
-            let elapsed = start.elapsed();
-            if elapsed > how_long {
-                return (elapsed.to_nanos(), total_iters);
+            elapsed_time += b.elapsed_time;
+            if elapsed_time > how_long {
+                return (elapsed_time.to_nanos(), total_iters);
             }
 
             b.iters *= 2;
