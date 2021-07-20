@@ -1580,15 +1580,6 @@ pub fn runner(benches: &[&dyn Fn()]) {
 #[doc(hidden)]
 pub fn __warn_about_html_reports_feature() {
     if CARGO_CRITERION_CONNECTION.is_none() {
-        println!(
-            "WARNING: HTML report generation will become a non-default optional feature in Criterion.rs 0.4.0."
-        );
-        println!(
-            "This feature is being moved to cargo-criterion \
-            (https://github.com/bheisler/cargo-criterion) and will be optional in a future \
-            version of Criterion.rs. To silence this warning, either switch to cargo-criterion or \
-            enable the 'html_reports' feature in your Cargo.toml."
-        );
         println!();
     }
 }
