@@ -1,0 +1,4 @@
+[toolchain]
+channel = "1.68.2" # check ^^^ when changing this
+#
+# channel = "nightly-2023-01-22" # 1.68.0 nightly to be able to use unstable features
